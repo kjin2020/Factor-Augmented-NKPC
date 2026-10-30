@@ -53,7 +53,7 @@ start_quarter = as.numeric(substr(rownames(cpi_df_Q_t)[1], 6, 6))
 cum_prod = function(x){
   res = rep(1,length(x))
   for(i in 2:length(x)){
-    res[length(x)-i+2] * x[length(x)-i+1]
+    res[length(x)-i+1] = res[length(x)-i+2] * x[length(x)-i+1]
   }
   return(res)
 }

@@ -1,9 +1,4 @@
-library(mFilter)
-library(quantmod)
-library(wv)
-library(seasonal)
-library(simts)
-library(tidyverse)
+source("NKPC_1.R")
 
 #############
 ##Construct inflation
@@ -29,9 +24,9 @@ for(year in 2023:2012){
   }
 }
 cpi_mat_Q1 = cpi_mat_Q-100
-#for (i in 1:nrow(cpi_mat_Q1)){
-#  cpi_mat_Q1[i,] = cpi_mat_Q1[i,]-mean(cpi_mat_Q1[i,])
-#}
+for (i in 1:nrow(cpi_mat_Q1)){
+  cpi_mat_Q1[i,] = nkpc_quarter_adjust(cpi_mat_Q1[i,], substr(cpi_q_n, 6, 6))
+}
 cpi_df_Q = as.data.frame(cpi_mat_Q1)
 
 rownames(cpi_df_Q) = cpi_df$Region
@@ -43,12 +38,6 @@ cpi_df_Q_t    = cpi_df_Q_t[rev(rownames(cpi_df_Q_t)), ]
 
 start_year    = as.numeric(substr(rownames(cpi_df_Q_t)[1], 1, 4))
 start_quarter = as.numeric(substr(rownames(cpi_df_Q_t)[1], 6, 6))
-
-#for (i in 1:ncol(cpi_df_Q_t)){
-#  tmp1 = ts(cpi_df_Q_t[,i], start = c(start_year, start_quarter), frequency = 4)
-#  tmp2     = final(seasonal:::seas(tmp1))
-#  cpi_df_Q_t[,i] = as.matrix(tmp2)
-#}
 
 cum_prod = function(x){
   res = rep(1,length(x))
@@ -75,6 +64,11 @@ for(year in 2023:2006){
 }
 colnames(ngdp) = gdp_q_n
 
+# Year-to-date nominal GDP -> quarterly flows, before deflation and filtering.
+# Columns descend Q4 to Q1; leave Q1 unchanged and difference within each year.
+non_q1 = which(!endsWith(colnames(ngdp), "Q1"))
+ngdp[,non_q1] = ngdp[,non_q1,drop=FALSE] - ngdp[,non_q1+1L,drop=FALSE]
+
 rgdpt = t(ngdp[,1:48])
 #######################
 for(i in 1:ncol(rgdpt)){
@@ -93,12 +87,7 @@ panel_rgdp    = panel_rgdp[rev(rownames(panel_rgdp)), ]
 start_year    = as.numeric(substr(rownames(panel_rgdp)[1], 1, 4))
 start_quarter = as.numeric(substr(rownames(panel_rgdp)[1], 6, 6))
 
-#tmp1 = ts(panel_rgdp[,2], start = c(start_year, start_quarter), frequency = 4)
-#tmp2 = final(seasonal:::seas(tmp1))
-#panel_rgdp[,2] = as.matrix(tmp2)
-
-panel_rgdp[,2]= hpfilter(log(panel_rgdp[,2]),freq = 1600)$cycle
-#panel_rgdp[,2]= panel_rgdp[,2]-mean(panel_rgdp[,2])
+panel_rgdp[,2]= nkpc_cycle(panel_rgdp[,2], substr(rownames(panel_rgdp), 6, 6))
 #max_lag <- 5
 #for(j in 1:max_lag){
 #  panel_rgdp <- cbind(panel_rgdp, my_lag(panel_rgdp[,2], k=j))
@@ -118,12 +107,7 @@ for(i in 2:ncol(rgdpt)){
   tmp    = as.data.frame(cbind(market,rgdpt[,i]))
   tmp[,2]= as.numeric(as.character(tmp[,2]))
   tmp    = tmp[rev(rownames(tmp)), ]
-  tmp1 = ts(tmp[,2], start = c(start_year, start_quarter), frequency = 4)
-  tmp2 = final(seasonal:::seas(tmp1))
-  tmp[,2] = as.matrix(tmp2)
-  
-  tmp[,2]= hpfilter(log(tmp[,2]),freq = 1600)$cycle
-#  tmp[,2]= tmp[,2]-mean(tmp[,2])
+  tmp[,2]= nkpc_cycle(tmp[,2], substr(rownames(tmp), 6, 6))
   
 #  max_lag <- 5
 #  for(j in 1:max_lag){
@@ -140,17 +124,23 @@ for(i in 2:ncol(rgdpt)){
 }
 #############
 ##Construct real estate investment 
-real_inv     = read.csv("real_es.csv")
-real_inv[is.na(real_inv)] = 0
-rownames(real_inv) = rownames(ngdp)
-real_inv_mat  = as.matrix(real_inv[,c(2:ncol(real_inv))])
-
-real_inv_mat_Q= matrix(NA,nrow(real_inv_mat),ncol(real_inv_mat)/3)
-for (i in 1:(ncol(real_inv_mat)/3)){
-  real_inv_mat_Q[,i] = apply(real_inv_mat[,c(1:3)+3*(i-1)],1,sum)
+investment_cycle = function(x, quarters){
+  # Keep the reported flows; a nonpositive flow leaves this province's cycle missing.
+  if (any(!is.finite(x) | x <= 0)) return(rep(NA_real_, length(x)))
+  nkpc_cycle(x, quarters)
 }
-
-real_inv_mat_Q = t(real_inv_mat_Q[,c(1:48)])
+real_inv     = read.csv("real_es.csv", check.names = FALSE)
+rownames(real_inv) = rownames(ngdp)
+quarter_ends = grep("年(3|6|9|12)月$", names(real_inv))
+real_inv_mat_Q = as.matrix(real_inv[,quarter_ends,drop=FALSE])
+real_inv_q_n = paste0(sub("年.*$", "", colnames(real_inv_mat_Q)), "Q",
+  as.integer(sub(".*年([0-9]+)月$", "\\1", colnames(real_inv_mat_Q))) %/% 3L)
+colnames(real_inv_mat_Q) = real_inv_q_n
+# Quarter-end observations are year-to-date totals, just as for nominal GDP.
+non_q1 = which(!endsWith(real_inv_q_n, "Q1"))
+real_inv_mat_Q[,non_q1] = real_inv_mat_Q[,non_q1,drop=FALSE] -
+  real_inv_mat_Q[,non_q1+1L,drop=FALSE]
+real_inv_mat_Q = t(real_inv_mat_Q[,colnames(ngdp)[1:48],drop=FALSE])
 
 colnames(real_inv_mat_Q) = colnames(rgdpt)
 rownames(real_inv_mat_Q) = rownames(rgdpt)
@@ -167,13 +157,8 @@ panel_real_estate_inv    = panel_real_estate_inv[rev(rownames(panel_real_estate_
 start_year    = as.numeric(substr(rownames(panel_real_estate_inv)[1], 1, 4))
 start_quarter = as.numeric(substr(rownames(panel_real_estate_inv)[1], 6, 6))
 
-tmp1 = ts(panel_real_estate_inv[,2], start = c(start_year, start_quarter), frequency = 4)
-tmp2 = final(seasonal:::seas(tmp1))
-panel_real_estate_inv[,2] = as.matrix(tmp2)
-
-
-panel_real_estate_inv[,2]= hpfilter(log(panel_real_estate_inv[,2]),freq = 1600)$cycle
-#panel_real_estate_inv[,2]= panel_real_estate_inv[,2] - mean(panel_real_estate_inv[,2])
+panel_real_estate_inv[,2]= investment_cycle(panel_real_estate_inv[,2],
+  substr(rownames(panel_real_estate_inv), 6, 6))
 
 #max_lag <- 5
 #for(j in 1:max_lag){
@@ -193,13 +178,7 @@ for(i in 2:ncol(real_inv_mat_Q)){
   tmp[,2]= as.numeric(as.character(tmp[,2]))
   tmp    = tmp[rev(rownames(tmp)), ]
   
-  tmp1 = ts(tmp[,2], start = c(start_year, start_quarter), frequency = 4)
-  tmp2 = final(seasonal:::seas(tmp1))
-  tmp[,2] = as.matrix(tmp2)
-  
-  
-  tmp[,2]= hpfilter(log(tmp[,2]),freq = 1600)$cycle
-#  tmp[,2]= tmp[,2]-mean(tmp[,2])
+  tmp[,2]= investment_cycle(tmp[,2], substr(rownames(tmp), 6, 6))
   
 #  max_lag <- 5
 #  for(j in 1:max_lag){

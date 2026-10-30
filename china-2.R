@@ -1,5 +1,7 @@
-library(mFilter)
-library(tidyverse)
+source("NKPC_1.R")
+library(dplyr)
+library(tidyr)
+library(tibble)
 library(lubridate)
 #############
 ##Construct output gap
@@ -15,6 +17,11 @@ for(year in 2023:2006){
   }
 }
 colnames(ngdp) = gdp_q_n
+
+# Year-to-date nominal GDP -> quarterly flows, before deflation and filtering.
+# Columns descend Q4 to Q1; leave Q1 unchanged and difference within each year.
+non_q1 = which(!endsWith(colnames(ngdp), "Q1"))
+ngdp[,non_q1] = ngdp[,non_q1,drop=FALSE] - ngdp[,non_q1+1L,drop=FALSE]
 
 rgdpt = t(ngdp[,1:48])
 
@@ -33,7 +40,7 @@ rgdpt <- rgdpt %>%
   arrange(Date)
 
 for(i in 2:ncol(rgdpt)){
-  rgdpt[,i] = hpfilter(log(rgdpt[,i]),freq = 1600)$cycle
+  rgdpt[,i] = nkpc_cycle(rgdpt[,i], quarter(rgdpt$Date))
 }
 
 panel_rgdp <- rgdpt %>%
